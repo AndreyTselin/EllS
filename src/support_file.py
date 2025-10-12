@@ -14,5 +14,12 @@ x = 2 * np.pi * (100 / 500) * N * y
 
 #print(np.identity(2) @ np.array([[1, 2], [3, 4]]))
 
-z = np.array([[1], [-1]])
-print(z[1, 0])
+#z = np.array([[1], [-1]])
+#print(z[1, 0])
+
+
+#print(np.tile(np.eye(2), (2, 1, 1, 1))[1, 0])
+
+#print(np.array([[1, 1 / 5], [1, -1 / 5]]))
+
+print(np.tile(np.eye(2), (4, 1, 1)))

@@ -94,9 +94,12 @@ class EllModel:
     calculate reflection coeficients
     """
 
-    def __init__(self, layers: list, angles, wavelengthes):
+    def __init__(self, layers: list, angles: list, wavelengthes):
         """
         define layers, angles and wl
+        take list of layers with length > 1
+        take array of angles in deg
+        take wavelengthes in nm
         """
 
         # list of layers and their counts
@@ -108,9 +111,13 @@ class EllModel:
 
         # angles of incedence
         self.angles = np.atleast_1d(angles)
+        self.angles_rad = np.atleast_1d(np.deg2rad(angles))
+        self.n_angles = len(self.angles)
+
 
         # array of wavelengthes
         self.wl = np.atleast_1d(wavelengthes)
+        self.n_wl = len(self.wl)
 
         # pandas df with s-polarisation reflection coefficients
         self.r_s = pd.DataFrame()
@@ -237,6 +244,15 @@ class EllModel:
         return inter_matrix
     
 
+    
+    def _interp_complex(self, x, xp, fp):
+       """
+       interpolate comples value
+       """
+       return np.interp(x, xp, fp.real) + 1j * np.interp(x, xp, fp.imag)
+    
+
+
     def transfer_matrix(self, layer: IsoLayer, ambient_layer: IsoLayer, pol='s'):
         """
         calculate R matrix for layer and 1 interface
@@ -252,7 +268,7 @@ class EllModel:
         matrix_df = pd.DataFrame()
 
         # ambient complex refractive index
-        N_a = np.interp(self.wl, ambient_layer.wl, ambient_layer.complex_n)
+        N_a = np.interp(self.wl, ambient_layer.wl, ambient_layer.complex_n.real) + 1j * np.interp(self.wl, ambient_layer.wl, ambient_layer.complex_n.imag)
         
         # complex refractive index of layer at self.wl which is an array in general case
         N = np.interp(self.wl, layer.wl, layer.complex_n.real) + 1j * np.interp(self.wl, layer.wl, layer.complex_n.imag)
@@ -313,14 +329,13 @@ class EllModel:
         def interp_complex(x, xp, fp):
             return np.interp(x, xp, fp.real) + 1j * np.interp(x, xp, fp.imag)
 
-        wl = self.wl
         angles = np.deg2rad(self.angles)
 
-        N_a = interp_complex(wl, ambient_layer.wl, ambient_layer.complex_n)
-        N = interp_complex(wl, layer.wl, layer.complex_n)
+        N_a = interp_complex(self.wl, ambient_layer.wl, ambient_layer.complex_n)
+        N = interp_complex(self.wl, layer.wl, layer.complex_n)
 
         n_angles = len(angles)
-        n_wl = len(wl)
+        n_wl = len(self.wl)
 
         # create 4D array 
         M = np.zeros((n_angles, n_wl, 2, 2), dtype=complex)
@@ -332,13 +347,15 @@ class EllModel:
 
             if pol == 's':
                 N_eff = N * np.sqrt(1 - sin_ratio**2)
+
             elif pol == 'p':
                 N_eff = N / np.sqrt(1 - sin_ratio**2)
+
             else:
                 raise ValueError(f"Expected pol='s' or 'p', got {pol!r}")
 
             #  (theta) from equation 1.258
-            theta = 2 * np.pi * (layer.thickness / wl) * N * np.sqrt(1 - sin_ratio**2)
+            theta = 2 * np.pi * (layer.thickness / self.wl) * N * np.sqrt(1 - sin_ratio**2)
 
             cos_th = (np.exp(1j * theta) + np.exp(-1j * theta)) / 2
             sin_th = (np.exp(1j * theta) - np.exp(-1j * theta)) / 2
@@ -351,41 +368,202 @@ class EllModel:
 
         return M
 
-    def total_tranfer_matrix(self):
+    def total_tranfer_matrix(self, pol = 's'):
         """
         Calculate total transfer matrix of whole structure
         according to equation 1.261, p.85, Tompkins-Irene-HANDBOOK OF ELLIPSOMETRY.
         """
 
-        # DataFrame with columns |angle, deg|wl, nm|r_s|r_p|
-        r_df = pd.DataFrame()
+        # ---- interpolate complex values ----
+        def interp_complex(x, xp, fp):
+            return np.interp(x, xp, fp.real) + 1j * np.interp(x, xp, fp.imag)
+        
+        # ---- Interpolate refractive index of air, which must be 1st layer (0 index) ----
+        N_a = interp_complex(self.wl, self.layers[0].wl, self.layers[0].complex_n)
 
-        R_matrix_s = np.identity(2)
-        R_matrix_p = np.identity(2)
+        # ---- Interpolate refractive index of substrate, which must be last layer (-1 index) ----
+        N_s = interp_complex(self.wl, self.layers[-1].wl, self.layers[-1].complex_n)
 
-        for angle in self.angles:
+        n_angles = len(self.angles)
+        n_wl = len(self.wl)
 
-            for wl in self.wl:
+        # ---- 4D array for total matrix ----
+        R_total = np.zeros((n_angles, n_wl, 2, 2), dtype=complex)
 
-                 # ambient complex refractive index
-                N_a = np.interp(wl, self.layers[0].wl, self.layers[0].complex_n)
+        # ---- Main loop ----
+        for i, angle in enumerate(self.angles_rad):
 
-                N_a_eff = N_a * np.cos(np.deg2rad(angle))
+            # ---- define effective refractive index depends on polarisation
+            if pol == 's':
+                N_a_eff = N_a * np.cos(angle)
 
-                # substrate complex refrative index N_0
-                N_0 = np.interp(wl, self.layers[-1].wl, self.layers[-1].complex_n)
+            elif pol == 'p':
+                N_a_eff = N_a / np.cos(angle)
+            
+            else:
+                raise ValueError(f"Expected pol='s' or 'p', got {pol!r}")
+
+            
+            # ---- calculate R_a matrix from equation 1.261, p.85 ----
+            R_a = np.zeros((n_angles, n_wl, 2, 2), dtype=complex)
+            R_a[i, :, 0, 0] = 0.5
+            R_a[i, :, 0, 1] = 0.5 / N_a_eff
+            R_a[i, :, 1, 0] = 0.5
+            R_a[i, :, 1, 1] = -0.5 / N_a_eff
+
+            
+            # ---- create 4D array for  transfer matrix ----
+            R = np.tile(np.eye(2), (n_wl, 1, 1))
+
+            # ---- define substarte vector from equation 1.259, p.84 ----
+            #E_s = np.array([[1], [-1 * N_s]])
 
 
-                #  matrix for ambient R_a
-                R_a = np.array([[1, 1/(N_a_eff )], [1, -1 / N_a_eff]])
 
-                for layer in self.layers[1:-1]:
+            # ---- in that loop calculate transfer matrix for each layer from 1 to -1 ----
+            for layer in self.layers[1: -1]:
+                R_i = self.transfer_matrix_2(layer, self.layers[0], pol)[i, :, :, :]
+                R = R @ R_i
 
-                    df_s = self.transfer_matrix(layer, self.layers[0], pol = 's') 
-                    R_matrix_s = R_matrix_s @ np.array([[df_s['r11'], df_s['r12']], [df_s['r21'], df_s['r22']]])
+            # ---- take into acount air matrix ----
+            R = R_a[i, :, :, :] @ R
 
-                E = 0.5 * R_a @ R_matrix_s @ np.array([[1], [-1 * N_0]])
-                r_s = E[0,0] / E[1,0]
+            # ---- save in total matrix for each angle ----
+            R_total[i, :, :, :] = R
+
+            
+        return R_total
+    
+
+
+    def reflect_coeff(self, pol='s'):
+        """
+        calculate r_s and r_p reflection coefficients 
+        """
+
+        # ---- Interpolate refractive index of substrate, which must be last layer (-1 index) ----
+        N_s = self._interp_complex(self.wl, self.layers[-1].wl, self.layers[-1].complex_n)
+
+        E_s = np.zeros((self.n_wl, 2, 1), dtype=complex)
+        E_s[:, 0, 0] = 1
+        E_s[:, 1, 0] = -1 / N_s
+
+
+        # ---- Create null 4D array for vector [E_r, E_i] ----
+        E = np.zeros((self.n_angles, self.n_wl, 2, 1), dtype=complex)
+
+        # ---- Create null 3D array for refl coeff r ----
+        r = np.zeros((self.n_angles, self.n_wl, 1), dtype=complex)
+
+        for i in range(self.n_angles):
+            
+            R = self.total_tranfer_matrix(pol)
+            E[i, :] = R[i, :] @ E_s
+            r[i, :, 0] = E[i, :, 0, 0] / E[i, :, 1, 0]
+            
+
+        
+        return r
+
+
+    def ro(self):
+        """
+        calculate ro $\ro$ = r_p / r_s
+        """
+
+        # ---- iniciate 3D array for ro ----
+        ro = np.zeros((self.n_angles, self.n_wl, 1), dtype=complex)
+
+        r_p = self.reflect_coeff('p')
+        r_s = self.reflect_coeff('s')
+
+        for i in range(self.n_angles):
+            ro[i, :] = r_p[i, :] / r_s[i, :]
+
+        return ro
+    
+
+    def Psi_calc(self):
+        """
+        calculate Psi for each wl and angle
+        ro = tan(Psi) * exp(i * Delta)
+        """
+
+        # ---- calculate ro ----
+        ro = self.ro()
+
+        Psi = np.rad2deg(np.atan(np.abs(ro)))
+
+
+        return Psi
+    
+
+
+    def Delta_calc(self):
+        """
+        calculate Delta for each wl and angle
+        ro = tan(Psi) * exp(i * Delta)
+        """
+
+        # ---- calculate ro ----
+        ro = self.ro()
+
+        Delta = np.rad2deg(np.angle(ro))
+
+
+        return Delta
+    
+
+    def Psi_calc_plot(self, save_path: str = None):
+        """
+        draw plot Psi (wl)
+        """
+
+        Psi = self.Psi_calc()
+
+        for i, angle in enumerate(self.angles):
+            
+            plt.plot(self.wl, Psi[i, :, 0], label=f'{angle}')
+
+        plt.legend()
+
+        plt.xlabel('$\lambda$, nm')
+        plt.ylabel('$\Psi$, deg')
+        plt.savefig(r'D:\VS code projects\EllS\plots\spsi.png')
+        plt.show()
+        
+
+
+
+    def Delta_calc_plot(self):
+        """
+        draw plot Delta vs wl
+        """
+
+        Delta = self.Delta_calc()
+
+        for i, angle in enumerate(self.angles):
+            
+            fig = plt.plot(self.wl, Delta[i, :, 0], label=f'{angle}')
+            
+        plt.legend()
+
+        plt.xlabel('$\lambda$, nm')
+        plt.ylabel('$\Delta$, deg')
+
+        plt.savefig(r'D:\VS code projects\EllS\plots\Delta.png')
+
+        plt.show()
+
+
+
+
+
+        
+
+        
+
+        
 
 
 

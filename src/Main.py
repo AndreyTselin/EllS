@@ -18,15 +18,33 @@ sio2_mal['n'] = ((1+0.6961663/(1-(0.0684043/sio2_mal['wl'])**2)
                  +0.8974794/(1-(9.896161/sio2_mal['wl'])**2))**.5)
 sio2_mal['k'] = np.zeros(len(sio2_mal['wl']))
 
-# create 100 nmthick SiO2 layer
-sio2 = IsoLayer(sio2_mal, 100)
+# create t nm thick SiO2 layer
+sio2 = IsoLayer(sio2_mal, 2)
+
+# create t nm thick Si layer
+si_l = IsoLayer(si_asp, 150)
 
 # create Si substrate and air semi-infinite layers
 si_sub = IsoLayer(si_asp)
 air = IsoLayer(air_nk)
 
 # create model
-model_1 = EllModel([air_nk, sio2, si_sub], [50, 60], si_asp['wl'][10])
+model_1 = EllModel([air, sio2, si_sub], [50, 60, 75], si_asp['wl'])
+model_2 = EllModel([air, si_l, si_sub], [50, 60, 75], si_asp['wl'])
 
 
-print(model_1.transfer_matrix_2(sio2, air, pol='s'))
+#print(model_1.transfer_matrix(sio2, air, pol='s'))
+#print(model_1.transfer_matrix_2(sio2, air, pol='s'))
+
+#for i, angle in enumerate([50]):
+#   print(model_1.transfer_matrix_2(sio2, air, pol='s')[i, :, :, :])
+
+#print(model_1.transfer_matrix_2(sio2, air, pol='s')[0, :, :, :] @ 
+# model_1.transfer_matrix_2(sio2, air, pol='s')[1, :, :, :])
+
+#print(model_1.transfer_matrix_2(sio2, air, pol='s')[0, :])
+
+
+print(model_1.Psi_calc_plot())
+print(model_1.Delta_calc_plot())
+
