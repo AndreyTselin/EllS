@@ -1,7 +1,8 @@
-from ast import Raise
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from scipy.interpolate import CubicSpline
 
 
 class IsoLayer:
@@ -46,7 +47,28 @@ class IsoLayer:
         
         self.complex_n = self.n + 1j * self.k
         self.complex_eps = self.e1 + 1j * self.e2
+
+
+    @staticmethod
+    def complex_interp_cubspline(x, xp, fp):
+        """
+        apply interpolation for real and imag parts
+        x - required wavelengthes, at which you need calculate f
+        xp - existing wavelengthes
+        fp - existing values for xp, can be complex values
+        """
+
+        cs_real = CubicSpline(xp, np.real(fp))
+        cs_imag = CubicSpline(xp, np.imag(fp))
+
+        if np.all(cs_imag(x) == 0):
+            return cs_real(x)
+        else:
+            return cs_real(x) + 1j * cs_imag(x)
+
     
+
+
     def is_infinite(self) -> bool:
         """True, if imfinite medium (air, substrate)."""
         return self.thickness is None
@@ -61,8 +83,8 @@ class IsoLayer:
         
         df = pd.DataFrame()
         wl = np.atleast_1d(wavelength)
-        n = np.interp(wl, self.wl, self.n)
-        k = np.interp(wl, self.wl, self.k)
+        n = self.complex_interp_cubspline(wl, self.wl, self.n)
+        k = self.complex_interp_cubspline(wl, self.wl, self.k)
         df['wl'] = wl
         df['n'] = n
         df['k'] = k
@@ -78,8 +100,8 @@ class IsoLayer:
         
         df = pd.DataFrame()
         wl = np.atleast_1d(wavelength)
-        e1 = np.interp(wl, self.wl, self.e1)
-        e2 = np.interp(wl, self.wl, self.e2)
+        e1 = self.complex_interp_cubspline(wl, self.wl, self.e1)
+        e2 = self.complex_interp_cubspline(wl, self.wl, self.e2)
         df['wl'] = wl
         df['n'] = e1
         df['k'] = e2

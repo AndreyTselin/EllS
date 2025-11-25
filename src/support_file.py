@@ -22,4 +22,4 @@ x = 2 * np.pi * (100 / 500) * N * y
 
 #print(np.array([[1, 1 / 5], [1, -1 / 5]]))
 
-print(np.tile(np.eye(2), (4, 1, 1)))
+print(np.zeros(5) + 2)
