@@ -28,7 +28,7 @@ class IsoLayer:
     
     """
     
-    def __init__(self, df:pd.DataFrame, thickness: float = None):
+    def __init__(self, df:pd.DataFrame, thickness: float = None, layer_type: str = 'layer'):
         """
         take nk dataframe df with columns ['wl', 'n', 'k'] or ['wl', 'e1', 'e2']
         column wl - wavelength in nm
@@ -37,8 +37,10 @@ class IsoLayer:
         e1 - permittivity real part 
         e2 - permittivity imag part
         thickness in nm, if None -> semiimfinite medium (air or substrate)
+        layer_type - 'layer' or 'substrate' or 'ambient'
         """
         self.thickness = thickness
+        self.layer_type = layer_type
 
         if "n" in df.columns and "k" in df.columns:
             self.wl = df["wl"].to_numpy(dtype=float)
@@ -73,6 +75,8 @@ class IsoLayer:
         xp - existing wavelengthes
         fp - existing values for xp, can be complex values
         method - interpolation method (mostly from scipy), cubicSpline - defoult
+
+        return : complex array of f(x)
         """
 
         if method == 'CubicSpline':
@@ -97,6 +101,26 @@ class IsoLayer:
             raise ValueError('Method name!!!')
 
     
+    def interpolate_nk(self, wavelength, method = 'PchipInterpolator') -> pd.DataFrame:
+        """
+        Interpolate n, k for specified wavelengthes in nm
+        wavelength : float or np.array
+        method : interpolation method
+        return : n + i*k -> same shape, as wavelength
+        """
+        
+        wl = np.atleast_1d(wavelength)
+
+        if method == 'CubicSpline':
+            n_cs = CubicSpline(self.wl, self.n)
+            k_cs = CubicSpline(self.wl, self.k)
+            return n_cs(wl) + 1j * k_cs(wl)
+        
+        elif method == 'PchipInterpolator':
+            n_pc = PchipInterpolator(self.wl, self.n)
+            k_pc = PchipInterpolator(self.wl, self.k)
+            return n_pc(wl) + 1j * k_pc(wl)
+
 
 
     def is_infinite(self) -> bool:
@@ -262,6 +286,21 @@ class GyroLayer(IsoLayer):
         return D
     
 
+    def d_0_matrix(self, angle: float, wl: float) -> np.array:
+        """
+        Docstring for d_0_matrix
+        
+        :param angle: angle of incedence in deg
+        :type angle: float
+        :param wl: wavelength in nm
+        :type wl: float
+        :return: matrix of isotropic ambient d_0
+        :rtype: Any
+        """
+
+        
+    
+
     def transfer_mx_m(self, angle: float, wl: float) -> np.array:
         """
         calculate transfer matrix according to "MAGNETO-OPTICAL POLAR KERR EFFECT 
@@ -282,33 +321,78 @@ class GyroLayer(IsoLayer):
         return M
         
 
+class AirLayer(IsoLayer):
+    """
+    Describe air layer with n=1, k=0, thickness = None (semi-infinite)
+    """
 
-class CaushyLayer(IsoLayer):
+    def __init__(self):
+        """
+        Initialize air layer with n=1, k=0, thickness = None
+        """
+        wl = np.arange(200, 4000, 1)  # Wavelength range in nm
+        n = np.ones(len(wl))    # Refractive index
+        k = np.zeros(len(wl))    # Extinction coefficient
+
+        df = pd.DataFrame({'wl': wl, 'n': n, 'k': k})
+
+        super().__init__(df, thickness=None, layer_type='ambient')
+
+    
+    def d_0_inverse(self, angle: float) -> np.array:
+        """
+        Calculate d_0 matrix for air layer according to "MAGNETO-OPTICAL POLAR KERR EFFECT 
+        IN A FILM-SUBSTRATE SYSTEM  S. Vigfiovsky" equation 6 for matrix D.
+        Matrix is calculated for single angle and single wavelength
+
+        angle in deg
+        """
+
+        angle_rad = np.deg2rad(angle)
+
+        n = 1  # Refractive index of air
+
+        a_z = np.cos(angle_rad)
+
+        # Dynamic matrix D for isotropic ambient
+        D = (1 / (2 * n * a_z)) * np.array([[n * a_z, 1, 0, 0],
+                                            [n * a_z, -1, 0, 0],
+                                            [0, 0, n, -a_z],
+                                            [0, 0, n, a_z]])
+
+        return D
+
+class CauchyLayer(IsoLayer):
     """
     Describe 1 isotropic layer with Cauchy model for n and k
     n(λ) = A + B/λ^2 + C/λ^4
     k(λ) = D*exp(E/λ)
     """
 
-    def __init__(self, A: float, B: float, C: float, D: float, E: float, wl: np.array, thickness: float = None):
+    def __init__(self, n_0: float, n_1: float, n_2: float, k_0: float, k_1: float, k_2: float,  wl: np.array, thickness: float = None):
         """
-        A, B, C - Cauchy parameters for n
-        D, E - Cauchy parameters for k
+        n_0, n_1, n_2 - Cauchy parameters for n
+        k_0, k_1, k_2 - Cauchy parameters for k
         thickness in nm
         wl - wavelength range in nm for which the model is valid
         """
-        self.A = A
-        self.B = B
-        self.C = C
-        self.D = D
-        self.E = E
+
+        self.n_0 = n_0
+        self.n_1 = n_1
+        self.n_2 = n_2
+        self.k_0 = k_0
+        self.k_1 = k_1
+        self.k_2 = k_2
         self.wl = np.atleast_1d(wl) # wl
         self.thickness = thickness
 
 
         # calculate n and k using Cauchy model
-        self.n =  self.A + self.B / self.wl**2 + self.C / self.wl**4
-        self.k =  self.D * np.exp(self.E / self.wl)
+        c_0 = 100
+        c_1 = 1e7
+        self.n =  self.n_0 + c_0 * self.n_1 / self.wl**2 + c_1 * self.n_2 / self.wl**4
+        self.k = self.k_0 + c_0 * self.k_1 / self.wl**2 + c_1 * self.k_2 / self.wl**4
+
 
         # calculate ε1, ε2
         self.e1 = self.n**2 - self.k**2

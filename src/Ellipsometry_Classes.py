@@ -1,112 +1,17 @@
+"""
+Define classes for ellipsometry modeling:
+- EllModel: main class for ellipsometry model
+- Excperimental Data class: for handling experimental data Psi and Delta
+- Fit class: for fitting ellipsometry data
+"""
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from scipy.interpolate import CubicSpline
+from scipy.interpolate import CubicSpline, PchipInterpolator
+from Layers_Classes import IsoLayer, GyroLayer
 
 
-class IsoLayer:
-    """
-    Describe 1 isotropic layer.
-    Optical properties are table wl|n|k or wl|e1|e2
-    
-    """
-    
-    def __init__(self, df:pd.DataFrame, thickness: float = None):
-        """
-        take nk dataframe df with columns ['wl', 'n', 'k'] or ['wl', 'e1', 'e2']
-        column wl - wavelength in nm
-        column n - refractive index
-        column k - extinction coeficient
-        e1 - permittivity real part 
-        e2 - permittivity imag part
-        thickness in nm, if None -> semiimfinite medium (air or substrate)
-        """
-        self.thickness = thickness
-
-        if "n" in df.columns and "k" in df.columns:
-            self.wl = df["wl"].to_numpy(dtype=float)
-            self.n = df["n"].to_numpy(dtype=float)
-            self.k = df["k"].to_numpy(dtype=float)
-
-            # calculate ε1, ε2
-            self.e1 = self.n**2 - self.k**2
-            self.e2 = 2 * self.n * self.k
-
-        elif "e1" in df.columns and "e2" in df.columns:
-            self.wl = df["wl"].to_numpy(dtype=float)
-            self.e1 = df["e1"].to_numpy(dtype=float)
-            self.e2 = df["e2"].to_numpy(dtype=float)
-
-            # calculate n, k
-            abs_eps = np.sqrt(self.e1**2 + self.e2**2)
-            self.n_ = np.sqrt((abs_eps + self.e1) / 2)
-            self.k = np.sqrt((abs_eps - self.e1) / 2)
-        else:
-            raise ValueError("DataFrame have to contain either (wl, n, k) or (wl, e1, e2)")
-        
-        self.complex_n = self.n + 1j * self.k
-        self.complex_eps = self.e1 + 1j * self.e2
-
-
-    @staticmethod
-    def complex_interp_cubspline(x, xp, fp):
-        """
-        apply interpolation for real and imag parts
-        x - required wavelengthes, at which you need calculate f
-        xp - existing wavelengthes
-        fp - existing values for xp, can be complex values
-        """
-
-        cs_real = CubicSpline(xp, np.real(fp))
-        cs_imag = CubicSpline(xp, np.imag(fp))
-
-        if np.all(cs_imag(x) == 0):
-            return cs_real(x)
-        else:
-            return cs_real(x) + 1j * cs_imag(x)
-
-    
-
-
-    def is_infinite(self) -> bool:
-        """True, if imfinite medium (air, substrate)."""
-        return self.thickness is None
-    
-    
-    def get_nk(self, wavelength) -> pd.DataFrame:
-        """
-        Interpolate n, k for specified wavelengthes in nm
-        wavelength : float or np.array
-        return : (n, k) → массивы той же формы, что и wavelength
-        """
-        
-        df = pd.DataFrame()
-        wl = np.atleast_1d(wavelength)
-        n = self.complex_interp_cubspline(wl, self.wl, self.n)
-        k = self.complex_interp_cubspline(wl, self.wl, self.k)
-        df['wl'] = wl
-        df['n'] = n
-        df['k'] = k
-        return df
-    
-    
-    def get_epsilon(self, wavelength) -> pd.DataFrame:
-        """
-        Interpolate e1, e2 for specified wavelengthes in nm
-        wavelength : float or np.array
-        return : (e1, e2) → массивы той же формы, что и wavelength
-        """
-        
-        df = pd.DataFrame()
-        wl = np.atleast_1d(wavelength)
-        e1 = self.complex_interp_cubspline(wl, self.wl, self.e1)
-        e2 = self.complex_interp_cubspline(wl, self.wl, self.e2)
-        df['wl'] = wl
-        df['n'] = e1
-        df['k'] = e2
-        return df
-    
 
 
 class EllModel:
@@ -149,6 +54,14 @@ class EllModel:
         
         # lets store each interface in the list which size is (len(layers) - 1)
         self.interfaces = list()
+
+        # Psi dict for each angle
+        self.Psi = pd.DataFrame()
+        self.Psi['wl'] = self.wl # in nm
+
+        # Delta dict for each angle
+        self.Delta = pd.DataFrame()
+        self.Delta['wl'] = self.wl # in nm
 
     
     def _r_s(self, layer_1, layer_2, angle):
@@ -346,23 +259,16 @@ class EllModel:
                 "This method is used for 3 or more layers in structure; "
                 "for 1-2 layers use method <INSERT METHOD NAME>."
             )
+        
+        # interpolate refractive indices
+        N_a = ambient_layer.interpolate_nk(self.wl)
+        N = layer.interpolate_nk(self.wl)
 
-        # ---- interpolate complex values ----
-        def interp_complex(x, xp, fp):
-            return np.interp(x, xp, fp.real) + 1j * np.interp(x, xp, fp.imag)
-
-        angles = np.deg2rad(self.angles)
-
-        N_a = interp_complex(self.wl, ambient_layer.wl, ambient_layer.complex_n)
-        N = interp_complex(self.wl, layer.wl, layer.complex_n)
-
-        n_angles = len(angles)
-        n_wl = len(self.wl)
 
         # create 4D array 
-        M = np.zeros((n_angles, n_wl, 2, 2), dtype=complex)
+        M = np.zeros((self.n_angles, self.n_wl, 2, 2), dtype=complex)
 
-        for i, angle in enumerate(angles):
+        for i, angle in enumerate(self.angles_rad):
 
             sin_a = np.sin(angle)
             sin_ratio = N_a * sin_a / N
@@ -390,27 +296,20 @@ class EllModel:
 
         return M
 
-    def total_tranfer_matrix(self, pol = 's'):
+    def total_transfer_matrix(self, pol = 's'):
         """
         Calculate total transfer matrix of whole structure
         according to equation 1.261, p.85, Tompkins-Irene-HANDBOOK OF ELLIPSOMETRY.
         """
 
-        # ---- interpolate complex values ----
-        def interp_complex(x, xp, fp):
-            return np.interp(x, xp, fp.real) + 1j * np.interp(x, xp, fp.imag)
         
         # ---- Interpolate refractive index of air, which must be 1st layer (0 index) ----
-        N_a = interp_complex(self.wl, self.layers[0].wl, self.layers[0].complex_n)
+        N_a = self.layers[0].interpolate_nk(self.wl)
 
-        # ---- Interpolate refractive index of substrate, which must be last layer (-1 index) ----
-        N_s = interp_complex(self.wl, self.layers[-1].wl, self.layers[-1].complex_n)
 
-        n_angles = len(self.angles)
-        n_wl = len(self.wl)
 
         # ---- 4D array for total matrix ----
-        R_total = np.zeros((n_angles, n_wl, 2, 2), dtype=complex)
+        R_total = np.zeros((self.n_angles, self.n_wl, 2, 2), dtype=complex)
 
         # ---- Main loop ----
         for i, angle in enumerate(self.angles_rad):
@@ -427,7 +326,7 @@ class EllModel:
 
             
             # ---- calculate R_a matrix from equation 1.261, p.85 ----
-            R_a = np.zeros((n_angles, n_wl, 2, 2), dtype=complex)
+            R_a = np.zeros((self.n_angles, self.n_wl, 2, 2), dtype=complex)
             R_a[i, :, 0, 0] = 0.5
             R_a[i, :, 0, 1] = 0.5 / N_a_eff
             R_a[i, :, 1, 0] = 0.5
@@ -435,17 +334,14 @@ class EllModel:
 
             
             # ---- create 4D array for  transfer matrix ----
-            R = np.tile(np.eye(2), (n_wl, 1, 1))
-
-            # ---- define substarte vector from equation 1.259, p.84 ----
-            #E_s = np.array([[1], [-1 * N_s]])
-
+            R = np.tile(np.eye(2, dtype=complex), (self.n_wl, 1, 1))
 
 
             # ---- in that loop calculate transfer matrix for each layer from 1 to -1 ----
-            for layer in self.layers[1: -1]:
+            for layer in reversed(self.layers[1: -1]):
                 R_i = self.transfer_matrix_2(layer, self.layers[0], pol)[i, :, :, :]
                 R = R @ R_i
+
 
             # ---- take into acount air matrix ----
             R = R_a[i, :, :, :] @ R
@@ -464,7 +360,7 @@ class EllModel:
         """
 
         # ---- Interpolate refractive index of substrate, which must be last layer (-1 index) ----
-        N_s = self._interp_complex(self.wl, self.layers[-1].wl, self.layers[-1].complex_n)
+        N_s = self.layers[-1].interpolate_nk(self.wl)
 
         E_s = np.zeros((self.n_wl, 2, 1), dtype=complex)
         E_s[:, 0, 0] = 1
@@ -477,15 +373,18 @@ class EllModel:
         # ---- Create null 3D array for refl coeff r ----
         r = np.zeros((self.n_angles, self.n_wl, 1), dtype=complex)
 
+        R = self.total_transfer_matrix(pol)
+
         for i in range(self.n_angles):
             
-            R = self.total_tranfer_matrix(pol)
             E[i, :] = R[i, :] @ E_s
             r[i, :, 0] = E[i, :, 0, 0] / E[i, :, 1, 0]
-            
 
-        
+        if pol == 'p':
+            r = -r   # переворачиваем знак только для p-поляризации
+            
         return r
+    
 
 
     def ro(self):
@@ -516,6 +415,9 @@ class EllModel:
 
         Psi = np.rad2deg(np.atan(np.abs(ro)))
 
+        for angle_idx, angle in enumerate(self.angles):
+            self.Psi[str(angle)] = Psi[angle_idx, :, 0]
+
 
         return Psi
     
@@ -531,6 +433,9 @@ class EllModel:
         ro = self.ro()
 
         Delta = np.rad2deg(np.angle(ro))
+
+        for angle_idx, angle in enumerate(self.angles):
+            self.Delta[str(angle)] = Delta[angle_idx, :, 0]
 
 
         return Delta
