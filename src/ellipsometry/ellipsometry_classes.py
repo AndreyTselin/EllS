@@ -9,7 +9,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.interpolate import CubicSpline, PchipInterpolator
-from Layers_Classes import IsoLayer, GyroLayer
+from scipy.optimize import least_squares
+from ellipsometry.models.layers_classes import IsoLayer, GyroLayer
 
 
 
@@ -62,130 +63,6 @@ class EllModel:
         # Delta dict for each angle
         self.Delta = pd.DataFrame()
         self.Delta['wl'] = self.wl # in nm
-
-    
-    def _r_s(self, layer_1, layer_2, angle):
-        """
-        The method is used yet only in the Class.
-        calculate s-polarisation reflection coefficient.
-        N_1 - complex refractive index of 1st medium (incoming).
-        N_2 - complex refractive index of 2nd medium (outcoming).
-        angle - angle of incidence in 1st medium in deg.
-        """
-        
-        # interpolate complex refractive index to given wavelengthes
-        n_1 = np.interp(self.wl, layer_1.wl, layer_1.complex_n)
-        n_2 = np.interp(self.wl, layer_2.wl, layer_2.complex_n)
-
-        # transfer angle in deg in rad
-        ang = np.deg2rad(angle)
-
-        # calculate angle of refraction using Snell law
-        cos_2 = np.sqrt(1 - (n_1 / n_2) ** 2 * np.sin(ang) ** 2)
-
-        # return s- reflection coefficient
-        return (n_1 * np.cos(ang) - n_2 * cos_2) / (n_1 * np.cos(angle) + n_2 * cos_2)
-    
-
-    def _r_p(self, layer_1, layer_2, angle):
-        """
-        The method is used yet only in the Class.
-        calculate p-polarisation reflection coefficient.
-        N_1 - complex refractive index of 1st medium (incoming).
-        N_2 - complex refractive index of 2nd medium (outcoming).
-        angle - angle of incidence in 1st medium in deg.
-        """
-
-        # interpolate complex refractive index to given wavelengthes
-        n_1 = np.interp(self.wl, layer_1.wl, layer_1.complex_n)
-        n_2 = np.interp(self.wl, layer_2.wl, layer_2.complex_n)
-
-        # transfer angle in deg in rad
-        ang = np.deg2rad(angle)
-
-        # calculate angle of refraction using Snell law
-        cos_2 = np.sqrt(1 - (n_1 / n_2) ** 2 * np.sin(ang) ** 2)
-
-        # return p- reflection coefficient
-        return (n_1 * cos_2 - n_2 * np.cos(ang)) / (n_1 * cos_2 + n_2 * np.cos(ang))
-    
-    
-    def _t_s(self, layer_1, layer_2, angle):
-        """
-        The method is used yet only in the Class.
-        calculate s-polarisation transmission coefficient.
-        N_1 - complex refractive index of 1st medium (incoming).
-        N_2 - complex refractive index of 2nd medium (outcoming).
-        angle - angle of incidence in 1st medium in deg.
-        """
-
-        # interpolate complex refractive index to given wavelengthes
-        n_1 = np.interp(self.wl, layer_1.wl, layer_1.complex_n)
-        n_2 = np.interp(self.wl, layer_2.wl, layer_2.complex_n)
-
-        # transfer angle in deg in rad
-        ang = np.deg2rad(angle)
-
-        # calculate angle of refraction using Snell law
-        cos_2 = np.sqrt(1 - (n_1 / n_2) ** 2 * np.sin(ang) ** 2)
-
-        # return s- transmission coefficient
-        return (2 * n_1 * np.cos(ang)) / (n_1 * np.cos(angle) + n_2 * cos_2)
-    
-
-    def _t_p(self, layer_1, layer_2, angle):
-        """
-        The method is used yet only in the Class.
-        calculate p-polarisation transmission coefficient.
-        N_1 - complex refractive index of 1st medium (incoming).
-        N_2 - complex refractive index of 2nd medium (outcoming).
-        angle - angle of incidence in 1st medium in deg.
-        """
-
-        # interpolate complex refractive index to given wavelengthes
-        n_1 = np.interp(self.wl, layer_1.wl, layer_1.complex_n)
-        n_2 = np.interp(self.wl, layer_2.wl, layer_2.complex_n)
-
-        # transfer angle in deg in rad
-        ang = np.deg2rad(angle)
-
-        # calculate angle of refraction using Snell law
-        cos_2 = np.sqrt(1 - (n_1 / n_2) ** 2 * np.sin(ang) ** 2)
-
-        # return p- transmission coefficient
-        return (2 * n_1 * np.cos(ang)) / (n_2 * np.cos(angle) + n_1 * cos_2)
-    
-
-    def interface_matrix(self, layer_1, layer_2, angle, pol = 's'):
-        """
-        Calculate Interface matrix
-        """
-
-        t_s = self._t_s(layer_1, layer_2, angle)
-        t_p = self._t_p(layer_1, layer_2, angle)
-
-        r_s = self._r_s(layer_1, layer_2, angle)
-        r_p = self._r_p(layer_1, layer_2, angle)
-
-        if pol == 's':
-            inter_matrix = (1 / t_s) * np.array([[1, r_s], [r_s, 1]])
-        
-        elif pol == 'p':
-            inter_matrix = (1 / t_p) * np.array([[1, r_p], [r_p, 1]])
-        
-        else:
-            raise ValueError(f"Expected value are s or p, got {pol}")
-
-        return inter_matrix
-    
-
-    
-    def _interp_complex(self, x, xp, fp):
-       """
-       interpolate comples value
-       """
-       return np.interp(x, xp, fp.real) + 1j * np.interp(x, xp, fp.imag)
-    
 
 
     def transfer_matrix(self, layer: IsoLayer, ambient_layer: IsoLayer, pol='s'):
@@ -386,7 +263,6 @@ class EllModel:
         return r
     
 
-
     def ro(self):
         """
         calculate ro $\ro$ = r_p / r_s
@@ -432,7 +308,7 @@ class EllModel:
         # ---- calculate ro ----
         ro = self.ro()
 
-        Delta = np.rad2deg(np.angle(ro))
+        Delta = (np.rad2deg(np.angle(ro)) + 180) % 360
 
         for angle_idx, angle in enumerate(self.angles):
             self.Delta[str(angle)] = Delta[angle_idx, :, 0]
@@ -483,26 +359,20 @@ class EllModel:
         plt.show()
 
 
+class Fitting:
+    """
+    fit calculated Psi and Delta to experimental
+    The method uses Levenberg-Marquardt algorithm
+    """
+
+    def __init__(self, model: EllModel, experimental_data: pd.DataFrame):
+        """
+        model - EllModel object
+        experimental_data - DataFrame with columns 'wl', 'Psi', 'Delta' at different angles
+        example of experimental_data columns: 'wl', 'Psi_60', 'Delta_60', 'Psi_70', 'Delta_70'
+        """
+
+        self.model = model
+        self.experimental_data = experimental_data
 
 
-
-        
-
-        
-
-        
-
-
-
-
-
-
-
-
-
-
-
-
-    
-
-        

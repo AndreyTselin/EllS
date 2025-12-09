@@ -67,39 +67,6 @@ class IsoLayer:
         self.complex_eps = self.e1 + 1j * self.e2
 
 
-    @staticmethod
-    def complex_interp(x, xp, fp, method: str = 'CubicSpline'):
-        """
-        apply interpolation for real and imag parts
-        x - required wavelengthes, at which you need calculate f
-        xp - existing wavelengthes
-        fp - existing values for xp, can be complex values
-        method - interpolation method (mostly from scipy), cubicSpline - defoult
-
-        return : complex array of f(x)
-        """
-
-        if method == 'CubicSpline':
-            cs_real = CubicSpline(xp, np.real(fp))
-            cs_imag = CubicSpline(xp, np.imag(fp))
-
-            if np.all(cs_imag(x) == 0):
-                return cs_real(x)
-            else:
-                return cs_real(x) + 1j * cs_imag(x)
-        
-        elif method == 'PchipInterpolator':
-            pc_real = PchipInterpolator(xp, np.real(fp))
-            pc_imag = PchipInterpolator(xp, np.imag(fp))
-
-            if np.all(pc_imag(x) == 0):
-                return pc_real(x)
-            else:
-                return pc_real(x) + 1j * pc_imag(x)
-        
-        else:
-            raise ValueError('Method name!!!')
-
     
     def interpolate_nk(self, wavelength, method = 'PchipInterpolator') -> pd.DataFrame:
         """
@@ -120,6 +87,8 @@ class IsoLayer:
             n_pc = PchipInterpolator(self.wl, self.n)
             k_pc = PchipInterpolator(self.wl, self.k)
             return n_pc(wl) + 1j * k_pc(wl)
+        else:
+            raise ValueError('Method name!!!')
 
 
 
@@ -160,6 +129,84 @@ class IsoLayer:
         df['n'] = e1
         df['k'] = e2
         return df
+    
+    def plot_nk(self):
+        """Plot n and k vs wavelength."""
+        plt.figure()
+        plt.plot(self.wl, self.n, label='n')
+        plt.plot(self.wl, self.k, label='k')
+        plt.xlabel('Wavelength (nm)')
+        plt.ylabel('n, k')
+        plt.title('Refractive Index and Extinction Coefficient')
+        plt.legend()
+        plt.grid()
+        plt.show()
+
+    def plot_epsilon(self):
+        """Plot e1 and e2 vs wavelength."""
+        plt.figure()
+        plt.plot(self.wl, self.e1, label='e1')
+        plt.plot(self.wl, self.e2, label='e2')
+        plt.xlabel('Wavelength (nm)')
+        plt.ylabel('e1, e2')
+        plt.title('Dielectric Function Components')
+        plt.legend()
+        plt.grid()
+        plt.show()
+    
+    def transfer_mx(self, ambient_layer, wl: float, angle:float, pol='s') -> np.array:
+        """
+        Docstring for transfer_mx
+        
+        :param wl: wavelength in nm at which the matrix is calculated
+        :type wl: float
+        :param angle: angle of incidence in degrees
+        :type angle: float
+        :param pol: polarization 's' or 'p'
+        :type pol: str
+        :return: transfer matrix
+        :rtype: np.array
+
+        Calculate 2x2 transfer matrices for given layer and ambient layer.
+        Based on Tompkins & Irene, *Handbook of Ellipsometry*, Eq. 1.258.
+    
+        Returns:
+            np.ndarray of shape (2, 2)
+
+        Ambient layer is the top layer (usually air), for which the angle of incidence is defined.
+        Airlayer is a class derived from IsoLayer with n=1, k=0.
+        """
+
+        n_a = ambient_layer.interpolate_nk(wl)
+        n = self.interpolate_nk(wl)
+
+        M = np.array([[], []])  # Placeholder for actual transfer matrix calculation
+
+        # Calculate effective refractive index based on polarization
+        sin_a = np.sin(np.deg2rad(angle)) # sin of angle of incidence in degrees
+        sin_ratio = n_a * sin_a / n
+
+        if pol == 's':
+            n_eff = n * np.sqrt(1 - sin_ratio**2)
+
+        elif pol == 'p':
+            n_eff = n / np.sqrt(1 - sin_ratio**2)
+
+        else:
+            raise ValueError(f"Expected pol='s' or 'p', got {pol!r}")
+        
+        theta = 2 * np.pi * (self.thickness / wl) * n * np.sqrt(1 - sin_ratio**2)
+
+        cos_th = (np.exp(1j * theta) + np.exp(-1j * theta)) / 2
+        sin_th = (np.exp(1j * theta) - np.exp(-1j * theta)) / 2
+
+        # Matrix elements
+        M[0, 0] = cos_th
+        M[0, 1] = sin_th / n_eff
+        M[1, 0] = n_eff * sin_th
+        M[1, 1] = cos_th
+
+        return M
     
 
 
@@ -405,7 +452,7 @@ class CauchyLayer(IsoLayer):
 class DrudeLorentzLayer(IsoLayer):
     """
     Describe 1 isotropic layer with Drude-Lorentz model for ε
-    ε(ω) = ε_inf - (ω_p^2)/(ω^2 + i*γ*ω) + Σ (f_j * ω_pj^2) / (ω_j^2 - ω^2 - i*γ_j*ω)
+    ε(ω) = ε_inf - (ω_p^2)/(ω^2 + i*gamma*ω) + Σ (f_j * ω_pj^2) / (ω_j^2 - ω^2 - i*gamma_j*ω)
     """
 
     def __init__(self, epsilon_inf: float, drude_params: dict, lorentz_params: list, wl: np.array, thickness: float = None):
@@ -439,7 +486,7 @@ class DrudeLorentzLayer(IsoLayer):
             f = params['f']
             omega_0 = params['omega_0']
             gamma_j = params['gamma']
-            epsilon += (f * omega_0**2) / (omega_0**2 - omega**2 - 1j * gamma_j * omega)
+            epsilon += (f**2) / (omega_0**2 - omega**2 - 1j * gamma_j * omega)
 
         # Extract n and k from ε
         self.e1 = np.real(epsilon)

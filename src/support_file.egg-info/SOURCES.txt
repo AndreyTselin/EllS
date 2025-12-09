@@ -1,0 +1,10 @@
+pyproject.toml
+src/support_file.py
+src/ellipsometry/__init__.py
+src/ellipsometry/ellipsometry_classes.py
+src/ellipsometry/main.py
+src/ellipsometry/models/layers_classes.py
+src/support_file.egg-info/PKG-INFO
+src/support_file.egg-info/SOURCES.txt
+src/support_file.egg-info/dependency_links.txt
+src/support_file.egg-info/top_level.txt
