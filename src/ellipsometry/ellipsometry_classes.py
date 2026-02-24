@@ -323,6 +323,7 @@ class EllModel:
         """
 
         Psi = self.Psi_calc()
+        plt.figure()
 
         for i, angle in enumerate(self.angles):
             
@@ -332,29 +333,32 @@ class EllModel:
 
         plt.xlabel('$\lambda$, nm')
         plt.ylabel('$\Psi$, deg')
-        plt.savefig(r'D:\VS code projects\EllS\plots\spsi.png')
+        if save_path is not None:
+            plt.savefig(save_path)
         plt.show()
         
 
 
 
-    def Delta_calc_plot(self):
+    def Delta_calc_plot(self, save_path: str = None):
         """
         draw plot Delta vs wl
         """
 
         Delta = self.Delta_calc()
+        plt.figure()
 
         for i, angle in enumerate(self.angles):
             
-            fig = plt.plot(self.wl, Delta[i, :, 0], label=f'{angle}')
+            plt.plot(self.wl, Delta[i, :, 0], label=f'{angle}')
             
         plt.legend()
 
         plt.xlabel('$\lambda$, nm')
         plt.ylabel('$\Delta$, deg')
 
-        plt.savefig(r'D:\VS code projects\EllS\plots\Delta.png')
+        if save_path is not None:
+            plt.savefig(save_path)
 
         plt.show()
 
@@ -374,5 +378,4 @@ class Fitting:
 
         self.model = model
         self.experimental_data = experimental_data
-
 

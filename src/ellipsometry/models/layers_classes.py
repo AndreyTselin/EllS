@@ -77,18 +77,32 @@ class IsoLayer:
         """
         
         wl = np.atleast_1d(wavelength)
+        n = self.complex_interp(wl, self.wl, self.n, method)
+        k = self.complex_interp(wl, self.wl, self.k, method)
+        return n + 1j * k
+
+
+    def complex_interp(self, wavelength, source_wl, values, method='PchipInterpolator'):
+        """
+        Interpolate real or complex tabulated values at target wavelengths.
+        """
+        wl = np.atleast_1d(wavelength)
+        source_wl = np.asarray(source_wl, dtype=float)
+        values = np.asarray(values)
 
         if method == 'CubicSpline':
-            n_cs = CubicSpline(self.wl, self.n)
-            k_cs = CubicSpline(self.wl, self.k)
-            return n_cs(wl) + 1j * k_cs(wl)
-        
+            interp_fn = CubicSpline
         elif method == 'PchipInterpolator':
-            n_pc = PchipInterpolator(self.wl, self.n)
-            k_pc = PchipInterpolator(self.wl, self.k)
-            return n_pc(wl) + 1j * k_pc(wl)
+            interp_fn = PchipInterpolator
         else:
-            raise ValueError('Method name!!!')
+            raise ValueError(f"Unknown interpolation method: {method!r}")
+
+        if np.iscomplexobj(values):
+            re = interp_fn(source_wl, np.real(values))(wl)
+            im = interp_fn(source_wl, np.imag(values))(wl)
+            return re + 1j * im
+
+        return interp_fn(source_wl, values)(wl)
 
 
 
@@ -126,8 +140,8 @@ class IsoLayer:
         e1 = self.complex_interp(wl, self.wl, self.e1, method)
         e2 = self.complex_interp(wl, self.wl, self.e2, method)
         df['wl'] = wl
-        df['n'] = e1
-        df['k'] = e2
+        df['e1'] = e1
+        df['e2'] = e2
         return df
     
     def plot_nk(self):
@@ -177,10 +191,13 @@ class IsoLayer:
         Airlayer is a class derived from IsoLayer with n=1, k=0.
         """
 
-        n_a = ambient_layer.interpolate_nk(wl)
-        n = self.interpolate_nk(wl)
+        if self.thickness is None:
+            raise ValueError("transfer_mx requires a finite-thickness layer.")
 
-        M = np.array([[], []])  # Placeholder for actual transfer matrix calculation
+        n_a = np.asarray(ambient_layer.interpolate_nk(wl)).reshape(-1)[0]
+        n = np.asarray(self.interpolate_nk(wl)).reshape(-1)[0]
+
+        M = np.zeros((2, 2), dtype=complex)
 
         # Calculate effective refractive index based on polarization
         sin_a = np.sin(np.deg2rad(angle)) # sin of angle of incidence in degrees
